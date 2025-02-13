@@ -44,18 +44,36 @@ if args.img:
     image_tensor, original_image = preprocess_image(args.img)
 
     # **5. Run Inference**
+# Run inference
     print("Running inference...")
     with torch.no_grad():
         output = model(image_tensor)  # Get output from model
 
-    # **Check if output is a list or tuple**
-    if isinstance(output, (list, tuple)) and len(output) >= 2:
-        paf, heatmap = output[-2], output[-1]  # Get last two outputs
-    else:
-        raise ValueError("Unexpected model output format: Expected tuple or list with at least 2 elements.")
+    # **Fix: Ensure the output is a tuple or list**
+    if isinstance(output, (list, tuple)):
+        # **Print output type and length for debugging**
+        print(f"Model returned type: {type(output)}, length: {len(output)}")
 
-    # Convert to NumPy arrays
+        # **Check if outputs are tensors**
+        for i, out in enumerate(output):
+            if isinstance(out, torch.Tensor):
+                print(f"Output {i} is a tensor with shape: {out.shape}")
+            else:
+                print(f"Output {i} is NOT a tensor. Found: {type(out)}")
+
+        # **Extract PAF & Heatmap (modify based on debug info)**
+        paf, heatmap = output[-2], output[-1]  # Modify index if needed
+    else:
+        raise ValueError(f"Unexpected model output format: {type(output)}. Expected list or tuple.")
+
+    # **Ensure PAF & Heatmap are tensors before calling .cpu()**
+    if not isinstance(paf, torch.Tensor) or not isinstance(heatmap, torch.Tensor):
+        raise TypeError(f"PAF or Heatmap is not a tensor. Found: {type(paf)}, {type(heatmap)}")
+
+    # Convert to NumPy
     paf, heatmap = paf.cpu().numpy(), heatmap.cpu().numpy()
+
+
 
     print("Inference complete!")
 
