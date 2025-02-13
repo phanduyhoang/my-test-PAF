@@ -54,6 +54,7 @@ def get_paf(coco, img, keypoints, sigma_paf, variable_width):
     n_person_part = np.zeros((len(BODY_PARTS),img.shape[0],img.shape[1]))
     for person_id in range(keypoints.shape[0]):
         keypoints_person = keypoints[person_id]
+        
         for i in range(len(BODY_PARTS)):
             part = BODY_PARTS[i]
             keypoint_1 = keypoints_person[part[0], :2]
