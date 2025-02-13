@@ -54,7 +54,7 @@ def eval_net(data_loader, model, opts):
             heatmap_avg = sum(heatmap_avg_lst)/n_imgs
             paf_avg = sum(paf_avg_lst)/n_imgs
             print("second loop", time.time() - start)
-            #visualize_output_single(img_basic, heatmap_t, paf_t, ignore_mask_t, heatmap_avg, paf_avg)
+            visualize_output_single(img_basic, heatmap_t, paf_t, ignore_mask_t, heatmap_avg, paf_avg)
             img_basic = denormalize(img_basic)
             param = {'thre1': 0.1, 'thre2': 0.05, 'thre3': 0.5}
             canvas, to_plot, candidate, subset = decode_pose(img_basic, param, heatmap_avg, paf_avg)
