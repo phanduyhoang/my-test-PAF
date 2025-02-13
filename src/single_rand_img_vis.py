@@ -58,30 +58,30 @@ if args.img:
         for i, out in enumerate(output):
             if isinstance(out, torch.Tensor):
                 print(f"Output {i} is a tensor with shape: {out.shape}")
+            elif isinstance(out, list) and all(isinstance(x, torch.Tensor) for x in out):
+                print(f"Output {i} is a list of tensors with length: {len(out)}")
             else:
                 print(f"Output {i} is NOT a tensor. Found: {type(out)}")
 
-        # **Extract PAF & Heatmap (modify based on debug info)**
+        # **Extract PAF & Heatmap (modify index if needed)**
         paf, heatmap = output[-2], output[-1]  # Modify index if needed
     else:
         raise ValueError(f"Unexpected model output format: {type(output)}. Expected list or tuple.")
 
-    # **Ensure PAF & Heatmap are tensors before calling .cpu()**
-    # **Ensure PAF & Heatmap are Tensors**
-    if isinstance(paf, list):
-        print(f"Converting PAF from list to tensor: Length {len(paf)}")
-        paf = torch.tensor(np.array(paf)).cuda()
-    if isinstance(heatmap, list):
-        print(f"Converting Heatmap from list to tensor: Length {len(heatmap)}")
-        heatmap = torch.tensor(np.array(heatmap)).cuda()
+    # **Fix: Convert lists of tensors to a single tensor**
+    if isinstance(paf, list) and all(isinstance(p, torch.Tensor) for p in paf):
+        print(f"Stacking PAF tensors: {len(paf)} elements")
+        paf = torch.stack(paf)  # Convert list of tensors to a single tensor
 
-    # Convert to NumPy
+    if isinstance(heatmap, list) and all(isinstance(h, torch.Tensor) for h in heatmap):
+        print(f"Stacking Heatmap tensors: {len(heatmap)} elements")
+        heatmap = torch.stack(heatmap)  # Convert list of tensors to a single tensor
+
+    # Ensure tensors are on CPU before converting to NumPy
     paf, heatmap = paf.cpu().numpy(), heatmap.cpu().numpy()
 
-
-
-
     print("Inference complete!")
+
 
     # **6. Resize Outputs to Match Image Size**
     heatmap_resized = resize_hm(heatmap[0], (original_image.shape[1], original_image.shape[0]))
