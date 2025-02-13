@@ -84,7 +84,26 @@ if args.img:
 
 
     # **6. Resize Outputs to Match Image Size**
-    heatmap_resized = resize_hm(heatmap[0], (original_image.shape[1], original_image.shape[0]))
+    #heatmap_resized = resize_hm(heatmap[0], (original_image.shape[1], original_image.shape[0]))
+    
+    # **Ensure the heatmap shape is (C, H, W) before resizing**
+    print(f"Heatmap shape before resizing: {heatmap.shape}")
+
+    # If the heatmap has an extra batch dimension, remove it
+    if len(heatmap.shape) == 4:
+        heatmap = heatmap[0]  # Remove batch dimension
+
+    # If the heatmap is (H, W, C) instead of (C, H, W), transpose it
+    if heatmap.shape[0] < heatmap.shape[1]:  
+        heatmap = heatmap.transpose(1, 2, 0)  # Convert (C, H, W) → (H, W, C)
+
+    # Resize heatmap correctly
+    heatmap_resized = resize_hm(heatmap, (original_image.shape[1], original_image.shape[0]))
+
+    print(f"Heatmap shape after resizing: {heatmap_resized.shape}")
+
+    
+    
     paf_resized = resize_hm(paf[0], (original_image.shape[1], original_image.shape[0]))
 
     # **7. Visualize Outputs**
