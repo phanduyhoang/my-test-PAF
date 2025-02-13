@@ -67,11 +67,17 @@ if args.img:
         raise ValueError(f"Unexpected model output format: {type(output)}. Expected list or tuple.")
 
     # **Ensure PAF & Heatmap are tensors before calling .cpu()**
-    if not isinstance(paf, torch.Tensor) or not isinstance(heatmap, torch.Tensor):
-        raise TypeError(f"PAF or Heatmap is not a tensor. Found: {type(paf)}, {type(heatmap)}")
+    # **Ensure PAF & Heatmap are Tensors**
+    if isinstance(paf, list):
+        print(f"Converting PAF from list to tensor: Length {len(paf)}")
+        paf = torch.tensor(np.array(paf)).cuda()
+    if isinstance(heatmap, list):
+        print(f"Converting Heatmap from list to tensor: Length {len(heatmap)}")
+        heatmap = torch.tensor(np.array(heatmap)).cuda()
 
     # Convert to NumPy
     paf, heatmap = paf.cpu().numpy(), heatmap.cpu().numpy()
+
 
 
 
