@@ -46,10 +46,17 @@ if args.img:
     # **5. Run Inference**
     print("Running inference...")
     with torch.no_grad():
-        paf, heatmap = model(image_tensor)
+        output = model(image_tensor)  # Get output from model
 
-    # Move outputs to CPU & convert to numpy
+    # **Check if output is a list or tuple**
+    if isinstance(output, (list, tuple)) and len(output) >= 2:
+        paf, heatmap = output[-2], output[-1]  # Get last two outputs
+    else:
+        raise ValueError("Unexpected model output format: Expected tuple or list with at least 2 elements.")
+
+    # Convert to NumPy arrays
     paf, heatmap = paf.cpu().numpy(), heatmap.cpu().numpy()
+
     print("Inference complete!")
 
     # **6. Resize Outputs to Match Image Size**
