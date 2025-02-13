@@ -87,20 +87,21 @@ if args.img:
     #heatmap_resized = resize_hm(heatmap[0], (original_image.shape[1], original_image.shape[0]))
     
     # **Ensure the heatmap shape is (C, H, W) before resizing**
-    print(f"Heatmap shape before resizing: {heatmap.shape}")
+# **Fix: Remove extra dimensions**
+    print(f"Original heatmap shape: {heatmap.shape}")  # Debugging output
 
-    # If the heatmap has an extra batch dimension, remove it
+    if len(heatmap.shape) == 5:  
+        heatmap = heatmap.squeeze(1)  # Remove extra dim if it exists (7, 1, 34, 46, 46) → (7, 34, 46, 46)
+        print(f"After squeeze: {heatmap.shape}")  
+
     if len(heatmap.shape) == 4:
-        heatmap = heatmap[0]  # Remove batch dimension
+        heatmap = heatmap[0]  # Take first batch if needed (34, 46, 46)
 
-    # If the heatmap is (H, W, C) instead of (C, H, W), transpose it
-    if heatmap.shape[0] < heatmap.shape[1]:  
-        heatmap = heatmap.transpose(1, 2, 0)  # Convert (C, H, W) → (H, W, C)
+    print(f"Final heatmap shape before resizing: {heatmap.shape}")
 
-    # Resize heatmap correctly
+    # Resize correctly
     heatmap_resized = resize_hm(heatmap, (original_image.shape[1], original_image.shape[0]))
 
-    print(f"Heatmap shape after resizing: {heatmap_resized.shape}")
 
     
     
