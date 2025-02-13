@@ -106,18 +106,19 @@ if args.img:
     
     
 # **Fix: Ensure the PAF shape is correct before resizing**
+# **Fix: Ensure the PAF shape is correct before resizing**
     print(f"Original PAF shape: {paf.shape}")  # Debugging output
 
-    # If PAF has 4 dimensions, squeeze extra dimension
-    if len(paf.shape) == 4:
-        paf = paf.squeeze(1)  # Remove unnecessary dim (7, 1, 34, 46, 46) → (7, 34, 46, 46)
+    # If PAF has 5 dimensions, remove extra ones
+    if len(paf.shape) == 5:
+        paf = paf.squeeze(1)  # Remove unnecessary dim (7, 1, 19, 46, 46) → (7, 19, 46, 46)
         print(f"After squeeze: {paf.shape}")  
 
-    # If PAF is still 4D, select the first batch
+    # If PAF is still 4D, take the first batch
     if len(paf.shape) == 4:
-        paf = paf[0]  # Take first batch if needed (34, 46, 46)
+        paf = paf[0]  # Take first batch if needed (19, 46, 46)
 
-    # If PAF is (C, H, W), transpose it to (H, W, C)
+    # If PAF is (C, H, W), transpose it to (H, W, C) for OpenCV
     if paf.shape[0] < paf.shape[1]:  
         paf = paf.transpose(1, 2, 0)  # Convert (C, H, W) → (H, W, C)
 
@@ -125,6 +126,7 @@ if args.img:
 
     # Resize correctly
     paf_resized = resize_hm(paf, (original_image.shape[1], original_image.shape[0]))
+
 
 
     # **7. Visualize Outputs**
