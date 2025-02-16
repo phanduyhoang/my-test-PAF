@@ -24,22 +24,23 @@ class CocoDataSet(data.Dataset):
         self.opt = opt
         print('Loaded {} images for {}'.format(len(self.indices), split))
         
-        # In-memory cache for images
+        # In-memory cache for images to avoid repeated disk I/O.
         self.image_cache = {}
-
-        # Setup Albumentations augmentation pipeline
+        
+        # Setup Albumentations augmentation pipeline.
+        # Make sure keypoints are in "xy" format.
         if self.do_augment:
             self.aug = A.Compose([
-                A.HorizontalFlip(p=opt.flipAugProb),  # Flip with probability from opts
+                A.HorizontalFlip(p=opt.flipAugProb),
                 A.ShiftScaleRotate(
                     shift_limit=0.0625,
-                    scale_limit=opt.scaleAugFactor,  
+                    scale_limit=opt.scaleAugFactor,
                     rotate_limit=opt.rotAugFactor * 15,  # adjust as needed
                     p=opt.rotAugProb
                 ),
                 A.RandomBrightnessContrast(
-                    brightness_limit=opt.colorAugFactor, 
-                    contrast_limit=opt.colorAugFactor, 
+                    brightness_limit=opt.colorAugFactor,
+                    contrast_limit=opt.colorAugFactor,
                     p=0.5
                 )
             ], keypoint_params=A.KeypointParams(format='xy', remove_invisible=False),
@@ -57,19 +58,21 @@ class CocoDataSet(data.Dataset):
         img = self.load_image(img_path)
         
         ignore_mask = get_ignore_mask(self.coco, img, annots)
-        keypoints = get_keypoints(self.coco, img, annots)  # likely returns shape (N, 3)
+        keypoints = get_keypoints(self.coco, img, annots)  # Likely returns shape (N,3)
         
         if self.do_augment and self.aug is not None:
-            # Convert keypoints to list of 2-tuples (discard the 3rd value if present)
-            if isinstance(keypoints, np.ndarray) and keypoints.ndim == 2 and keypoints.shape[1] > 2:
-                keypoints_list = [tuple(pt[:2]) for pt in keypoints]
+            # Force conversion: ensure keypoints are a list of (x, y) tuples.
+            keypoints_array = np.array(keypoints)
+            if keypoints_array.ndim == 2 and keypoints_array.shape[1] >= 2:
+                keypoints_list = [tuple(pt[:2]) for pt in keypoints_array]
             else:
-                keypoints_list = keypoints  # if already in the right format
+                keypoints_list = keypoints  # Fallback if already in correct format
             
             augmented = self.aug(image=img, mask=ignore_mask, keypoints=keypoints_list)
             img = augmented['image']
             ignore_mask = augmented['mask']
-            keypoints = np.array(augmented['keypoints'])  # now in shape (N, 2)
+            # After augmentation, convert keypoints back to a NumPy array.
+            keypoints = np.array(augmented['keypoints'])
         
         if to_resize:
             img, ignore_mask, keypoints = resize(img, ignore_mask, keypoints, self.opt.imgSize)
@@ -86,7 +89,7 @@ class CocoDataSet(data.Dataset):
         return img, heat_map, paf, ignore_mask, index
 
     def load_image(self, img_path):
-        # Use cache to avoid disk I/O every time
+        # Check cache first to avoid repeated disk reads.
         if img_path in self.image_cache:
             return self.image_cache[img_path]
         img = cv2.imread(img_path)
