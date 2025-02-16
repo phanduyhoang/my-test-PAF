@@ -95,7 +95,8 @@ def train_and_validate():
     train_dataset = CocoTrainDataset(data_path, opts, split='train')
     val_dataset = CocoTrainDataset(data_path, opts, split='val')
 
-    batch_size = 20  # Adjust this based on your GPU memory
+    #batch_size = 20  # Adjust this based on your GPU memory
+    batch_size = 1 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
