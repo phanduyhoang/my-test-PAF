@@ -24,10 +24,10 @@ class CocoDataSet(data.Dataset):
         self.opt = opt
         print(f'Loaded {len(self.indices)} images for {split}')
         
-        # In-memory cache for images
+        # In-memory image cache
         self.image_cache = {}
         
-        # Setup Albumentations augmentation pipeline (only if augmenting)
+        # Setup Albumentations augmentation pipeline (for training only)
         if self.do_augment:
             self.aug = A.Compose(
                 [
@@ -51,7 +51,7 @@ class CocoDataSet(data.Dataset):
             self.aug = None
 
     def load_image(self, img_path):
-        # Use cached image if available
+        # Use cache if available
         if img_path in self.image_cache:
             return self.image_cache[img_path]
         img = cv2.imread(img_path)
@@ -62,41 +62,40 @@ class CocoDataSet(data.Dataset):
         return img
 
     def get_item_raw(self, index, to_resize=True):
-        # Get image ID from indices
+        # Get image ID from the filtered list
         image_id = self.indices[index]
         anno_ids = self.coco.getAnnIds(image_id)
         annots = self.coco.loadAnns(anno_ids)
         
-        # Load image info and image
+        # Load image info and image itself
         img_info = self.coco.loadImgs([image_id])[0]
         img_path = os.path.join(self.img_dir, img_info['file_name'])
         img = self.load_image(img_path)
         
-        # Generate ignore mask and keypoints (assumed to be of shape (N, 3): x, y, visibility)
+        # Generate ignore mask and keypoints (keypoints expected as (N, 3): x, y, visibility)
         ignore_mask = get_ignore_mask(self.coco, img, annots)
         keypoints = get_keypoints(self.coco, img, annots)
         
-        # If augmenting, convert keypoints to list of (x, y) tuples
+        # Apply augmentation if enabled
         if self.do_augment and self.aug is not None:
-            # Convert keypoints (N,3) to a list of (x, y) tuples
+            # Convert keypoints from (N, 3) to a list of (x, y) tuples
             if isinstance(keypoints, np.ndarray) and keypoints.ndim == 2 and keypoints.shape[1] >= 2:
                 keypoints_list = [tuple(pt[:2]) for pt in keypoints]
             else:
                 keypoints_list = keypoints
             
-            # Apply augmentation
             augmented = self.aug(image=img, mask=ignore_mask, keypoints=keypoints_list)
             img = augmented['image']
             ignore_mask = augmented['mask']
-            # Reconstruct keypoints as a (N,3) array by adding a default visibility (1) to each keypoint
+            # Augmented keypoints come as a list of (x, y); reattach default visibility value 1
             aug_keypoints = augmented['keypoints']
             keypoints = np.array([[x, y, 1] for (x, y) in aug_keypoints], dtype=np.float32)
         
-        # Resize if necessary
+        # Resize image, ignore mask, and keypoints if requested
         if to_resize:
             img, ignore_mask, keypoints = resize(img, ignore_mask, keypoints, self.opt.imgSize)
         
-        # Generate target heatmaps and PAFs
+        # Generate heatmap and PAF targets
         heat_map = get_heatmap(self.coco, img, keypoints, self.opt.sigmaHM)
         paf = get_paf(self.coco, img, keypoints, self.opt.sigmaPAF, self.opt.variableWidthPAF)
         
