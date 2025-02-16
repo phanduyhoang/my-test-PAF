@@ -30,20 +30,21 @@ class CocoTrainDataset(torch.utils.data.Dataset):
         return img, heatmaps
 
 # --------------------------------------------------
-# Define a Grouped Keypoint Head where each branch is dedicated to one keypoint.
+# Define a simplified Grouped Keypoint Head with fewer channels.
+# Each branch is dedicated to one keypoint.
 # --------------------------------------------------
 class GroupedKeypointHead(nn.Module):
-    def __init__(self, in_channels, num_keypoints, branch_channels=256):
+    def __init__(self, in_channels, num_keypoints, branch_channels=128):
         """
         Args:
             in_channels (int): Number of input channels from the backbone.
             num_keypoints (int): Number of keypoints (each branch outputs one channel).
-            branch_channels (int): Number of channels in the branch layers.
+            branch_channels (int): Number of channels in the branch layers (reduced for memory).
         """
         super(GroupedKeypointHead, self).__init__()
         self.num_keypoints = num_keypoints
         
-        # Each branch is a small network that upsamples the features and outputs one heatmap.
+        # Each branch: two upsample and conv layers.
         self.branches = nn.ModuleList([
             nn.Sequential(
                 nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
@@ -64,20 +65,21 @@ class GroupedKeypointHead(nn.Module):
         return heatmaps
 
 # --------------------------------------------------
-# Define the complete Keypoint Model (VGG backbone)
+# Define the complete Keypoint Model with a simpler backbone.
 # --------------------------------------------------
 class KeypointModel(nn.Module):
     def __init__(self, num_keypoints=19):
         super(KeypointModel, self).__init__()
-        # Use a pretrained VGG19 and take a subset of layers.
+        # Use a pretrained VGG19 and take fewer layers to reduce memory usage.
         vgg = models.vgg19(pretrained=True)
-        # Here we use more layers if needed; adjust the slice if you want to expose more spatial resolution.
-        self.backbone = nn.Sequential(*list(vgg.features.children())[:10])
-        # Replace the simple head with the grouped head.
-        self.head = GroupedKeypointHead(in_channels=128, num_keypoints=num_keypoints, branch_channels=256)
+        # Use only the first 6 layers (instead of 10) for a smaller backbone.
+        self.backbone = nn.Sequential(*list(vgg.features.children())[:6])
+        # The output channels from this slice is typically 64.
+        # Adjust the head input channels accordingly.
+        self.head = GroupedKeypointHead(in_channels=64, num_keypoints=num_keypoints, branch_channels=128)
 
     def forward(self, x):
-        # Freeze the backbone during training to focus on the head.
+        # Freeze the backbone during training.
         with torch.no_grad():
             features = self.backbone(x)
         heatmaps = self.head(features)
@@ -109,6 +111,7 @@ def train_and_validate():
     train_dataset = CocoTrainDataset(data_path, opts, split='train')
     val_dataset = CocoTrainDataset(data_path, opts, split='val')
 
+    # Use a smaller batch size if necessary to reduce memory usage.
     batch_size = 16 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
@@ -120,7 +123,7 @@ def train_and_validate():
     # Initialize the model and move it to the device.
     model = KeypointModel(num_keypoints=19).to(device)
 
-    # Only the head parameters are optimized.
+    # Only optimize the head parameters.
     optimizer = optim.Adam(model.head.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
     criterion = nn.MSELoss()
@@ -136,7 +139,7 @@ def train_and_validate():
         model.train()
         train_loss = 0.0
 
-        # Create a tqdm progress bar for the training loader.
+        # Create a tqdm progress bar for training.
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1} Training", leave=False)
         for imgs, gt_heatmaps in pbar:
             imgs, gt_heatmaps = imgs.to(device), gt_heatmaps.to(device)
@@ -148,7 +151,7 @@ def train_and_validate():
             optimizer.step()
             train_loss += loss.item()
 
-            # Update tqdm with the current loss.
+            # Update tqdm with current loss.
             pbar.set_postfix(loss=loss.item())
 
         train_loss /= len(train_loader)
@@ -169,7 +172,7 @@ def train_and_validate():
 
         print(f"Epoch [{epoch+1}/{num_epochs}] -> Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
 
-        # Create the checkpoint dictionary
+        # Create the checkpoint dictionary.
         checkpoint = {
             'epoch': epoch + 1,
             'model_state_dict': model.state_dict(),
@@ -180,10 +183,10 @@ def train_and_validate():
             'best_val_loss': best_val_loss,
         }
         
-        # Save the latest checkpoint (overwrites the previous one)
+        # Save the latest checkpoint.
         save_checkpoint(checkpoint, 'latest_checkpoint.pth')
 
-        # Save the best model if validation loss improved
+        # Save the best model if validation loss improved.
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             save_checkpoint(checkpoint, 'best_model.pth')
@@ -192,7 +195,7 @@ def train_and_validate():
         scheduler.step()
         torch.cuda.empty_cache()
 
-    # Save loss history for future analysis.
+    # Save loss history for analysis.
     np.save('train_loss.npy', np.array(train_losses))
     np.save('val_loss.npy', np.array(val_losses))
     print("Training complete. Best model saved as 'best_model.pth'. Loss history saved.")
@@ -211,7 +214,7 @@ def visualize_predictions(model, val_loader, device):
         pred_heatmaps_np = pred_heatmaps.cpu().numpy()
         gt_heatmaps_np = sample_gt_heatmaps.numpy()
 
-        # Display the first image in the batch
+        # Display the first image in the batch.
         sample_img_np = sample_img[0].cpu().permute(1, 2, 0).numpy()
         sample_img_np = np.clip(sample_img_np, 0, 1)
         plt.figure(figsize=(6, 6))
