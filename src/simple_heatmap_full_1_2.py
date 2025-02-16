@@ -72,11 +72,10 @@ class KeypointModel(nn.Module):
         super(KeypointModel, self).__init__()
         # Use a pretrained VGG19 and take fewer layers to reduce memory usage.
         vgg = models.vgg19(pretrained=True)
-        # Use only the first 6 layers (instead of 10) for a smaller backbone.
+        # Using the first 6 layers yields an output with 128 channels.
         self.backbone = nn.Sequential(*list(vgg.features.children())[:6])
-        # The output channels from this slice is typically 64.
-        # Adjust the head input channels accordingly.
-        self.head = GroupedKeypointHead(in_channels=64, num_keypoints=num_keypoints, branch_channels=128)
+        # Set the head input channels to 128.
+        self.head = GroupedKeypointHead(in_channels=128, num_keypoints=num_keypoints, branch_channels=128)
 
     def forward(self, x):
         # Freeze the backbone during training.
