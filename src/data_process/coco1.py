@@ -11,16 +11,12 @@ from .process_utils import resize, resize_hm_paf, normalize
 
 def _prepare_keypoints_for_aug(keypoints):
     """
-    Converts keypoints (assumed to be a numpy array of shape (N,3) or list of length N with (x,y,...) )
+    Converts keypoints (expected as a numpy array of shape (N,3) or a list)
     into a list of (x, y) tuples.
     """
     if isinstance(keypoints, np.ndarray):
-        # Use only the first two values
-        return [(float(pt[0]), float(pt[1])) for pt in keypoints]
-    elif isinstance(keypoints, list):
-        return [(float(pt[0]), float(pt[1])) for pt in keypoints]
-    else:
-        raise ValueError("Keypoints have an unexpected type: " + str(type(keypoints)))
+        keypoints = keypoints.tolist()
+    return [(float(pt[0]), float(pt[1])) for pt in keypoints]
 
 class CocoDataSet(data.Dataset):
     def __init__(self, data_path, opt, split='train'):
@@ -37,10 +33,10 @@ class CocoDataSet(data.Dataset):
         self.opt = opt
         print(f'Loaded {len(self.indices)} images for {split}')
         
-        # In-memory cache for images to avoid repeated disk I/O.
+        # In-memory image cache
         self.image_cache = {}
         
-        # Setup Albumentations augmentation pipeline (only used if self.do_augment is True)
+        # Setup Albumentations augmentation pipeline (for training only)
         if self.do_augment:
             self.aug = A.Compose(
                 [
@@ -64,7 +60,7 @@ class CocoDataSet(data.Dataset):
             self.aug = None
 
     def load_image(self, img_path):
-        # Check cache first to avoid repeated disk reads.
+        # Check cache first
         if img_path in self.image_cache:
             return self.image_cache[img_path]
         img = cv2.imread(img_path)
@@ -75,36 +71,30 @@ class CocoDataSet(data.Dataset):
         return img
 
     def get_item_raw(self, index, to_resize=True):
-        # Get the image id from the filtered indices
         image_id = self.indices[index]
         anno_ids = self.coco.getAnnIds(image_id)
         annots = self.coco.loadAnns(anno_ids)
         
-        # Load image information and the image itself
         img_info = self.coco.loadImgs([image_id])[0]
         img_path = os.path.join(self.img_dir, img_info['file_name'])
         img = self.load_image(img_path)
         
-        # Generate ignore mask and keypoints
         ignore_mask = get_ignore_mask(self.coco, img, annots)
-        keypoints = get_keypoints(self.coco, img, annots)  # Expected shape: (N, 3)
+        keypoints = get_keypoints(self.coco, img, annots)  # Expected shape: (N,3)
         
-        # If augmentation is enabled, convert keypoints for Albumentations
         if self.do_augment and self.aug is not None:
-            # Convert keypoints to a list of (x, y) tuples
+            # Convert keypoints to a list of (x,y) tuples using the helper function
             keypoints_list = _prepare_keypoints_for_aug(keypoints)
             augmented = self.aug(image=img, mask=ignore_mask, keypoints=keypoints_list)
             img = augmented['image']
             ignore_mask = augmented['mask']
-            # Albumentations returns keypoints as a list of (x, y); add default visibility=1
-            aug_keypoints = augmented['keypoints']
+            aug_keypoints = augmented['keypoints']  # List of (x,y) tuples
+            # Rebuild keypoints as (N,3) with default visibility=1
             keypoints = np.array([[x, y, 1] for (x, y) in aug_keypoints], dtype=np.float32)
         
-        # Resize if required
         if to_resize:
             img, ignore_mask, keypoints = resize(img, ignore_mask, keypoints, self.opt.imgSize)
         
-        # Generate heatmap and PAF targets
         heat_map = get_heatmap(self.coco, img, keypoints, self.opt.sigmaHM)
         paf = get_paf(self.coco, img, keypoints, self.opt.sigmaPAF, self.opt.variableWidthPAF)
         
@@ -121,8 +111,7 @@ class CocoDataSet(data.Dataset):
         imgs = []
         for scale in scales:
             width, height = img.shape[1], img.shape[0]
-            new_width = int(scale * width)
-            new_height = int(scale * height)
+            new_width, new_height = int(scale * width), int(scale * height)
             scaled_img = cv2.resize(img.copy(), (new_width, new_height))
             norm_img = normalize(scaled_img)
             imgs.append(norm_img)
