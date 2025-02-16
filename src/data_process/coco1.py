@@ -19,7 +19,7 @@ def _prepare_keypoints_for_aug(keypoints):
         keypoints = keypoints.tolist()
     result = []
     for pt in keypoints:
-        # Check if the first element is itself a list/tuple (nested format)
+        # If pt[0] is a list/tuple/array, extract its first two elements
         if isinstance(pt[0], (list, tuple, np.ndarray)):
             x = float(pt[0][0])
             y = float(pt[0][1])
@@ -71,7 +71,7 @@ class CocoDataSet(data.Dataset):
             self.aug = None
 
     def load_image(self, img_path):
-        # Use cache if available
+        # Use cached image if available
         if img_path in self.image_cache:
             return self.image_cache[img_path]
         img = cv2.imread(img_path)
@@ -91,20 +91,30 @@ class CocoDataSet(data.Dataset):
         img = self.load_image(img_path)
         
         ignore_mask = get_ignore_mask(self.coco, img, annots)
-        keypoints = get_keypoints(self.coco, img, annots)  # Expected shape: (N,3) or nested
+        keypoints = get_keypoints(self.coco, img, annots)  # Expected shape: (N, 3) or similar
         
         if self.do_augment and self.aug is not None:
-            # Convert keypoints to a list of (x, y) tuples using the helper function.
+            # Convert keypoints to a list of (x, y) tuples for augmentation
             keypoints_list = _prepare_keypoints_for_aug(keypoints)
             augmented = self.aug(image=img, mask=ignore_mask, keypoints=keypoints_list)
             img = augmented['image']
             ignore_mask = augmented['mask']
             aug_keypoints = augmented['keypoints']  # List of (x, y) tuples
-            # Rebuild keypoints as (N, 3) with default visibility=1
+            # Rebuild keypoints as (N, 3) with default visibility 1
             keypoints = np.array([[x, y, 1] for (x, y) in aug_keypoints], dtype=np.float32)
         
         if to_resize:
+            # If keypoints are 2D (shape: (N,3)), temporarily add a batch dimension
+            added_dim = False
+            if keypoints.ndim == 2:
+                keypoints = keypoints[None, ...]  # Now shape becomes (1, N, 3)
+                added_dim = True
+            
             img, ignore_mask, keypoints = resize(img, ignore_mask, keypoints, self.opt.imgSize)
+            
+            # Remove the added dimension if necessary
+            if added_dim and keypoints.ndim == 3 and keypoints.shape[0] == 1:
+                keypoints = np.squeeze(keypoints, axis=0)
         
         heat_map = get_heatmap(self.coco, img, keypoints, self.opt.sigmaHM)
         paf = get_paf(self.coco, img, keypoints, self.opt.sigmaPAF, self.opt.variableWidthPAF)
