@@ -100,21 +100,35 @@ class CocoDataSet(data.Dataset):
             img = augmented['image']
             ignore_mask = augmented['mask']
             aug_keypoints = augmented['keypoints']  # List of (x, y) tuples
-            # Rebuild keypoints as (N, 3) with default visibility 1
+            # Rebuild keypoints as (N, 3) with default visibility=1
             keypoints = np.array([[x, y, 1] for (x, y) in aug_keypoints], dtype=np.float32)
         
         if to_resize:
-            # If keypoints are 2D (shape: (N,3)), temporarily add a batch dimension
+            # If keypoints are 2D (shape: (N,3)), temporarily add a dimension if needed
             added_dim = False
-            if keypoints.ndim == 2:
+            if isinstance(keypoints, np.ndarray) and keypoints.ndim == 2:
                 keypoints = keypoints[None, ...]  # Now shape becomes (1, N, 3)
                 added_dim = True
             
             img, ignore_mask, keypoints = resize(img, ignore_mask, keypoints, self.opt.imgSize)
             
-            # Remove the added dimension if necessary
             if added_dim and keypoints.ndim == 3 and keypoints.shape[0] == 1:
                 keypoints = np.squeeze(keypoints, axis=0)
+        
+        # Ensure keypoints is a NumPy array with shape (N, 3)
+        if not isinstance(keypoints, np.ndarray):
+            keypoints = np.array(keypoints, dtype=np.float32)
+        if keypoints.ndim == 1:
+            if keypoints.shape[0] == 3:
+                keypoints = keypoints.reshape(1, 3)
+            else:
+                keypoints = np.empty((0, 3), dtype=np.float32)
+        
+        # --- NEW SAFETY CHECK for get_heatmap ---
+        # (Some helper functions assume keypoints is an array with shape (N,3))
+        if keypoints.ndim != 2 or keypoints.shape[1] != 3:
+            # If keypoints are not in the expected shape, reset to an empty array.
+            keypoints = np.empty((0, 3), dtype=np.float32)
         
         heat_map = get_heatmap(self.coco, img, keypoints, self.opt.sigmaHM)
         paf = get_paf(self.coco, img, keypoints, self.opt.sigmaPAF, self.opt.variableWidthPAF)
