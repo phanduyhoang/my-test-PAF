@@ -6,14 +6,14 @@ import random
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torchvision import models
-# from torchvision.models import mobilenet_v3_small  # Import MobileNet V3 Small
-
-from opts.viz_opts import VizOpts
-from data_process.coco import CocoDataSet
 from tqdm import tqdm
 
+# These are your custom modules.
+from opts.viz_opts import VizOpts
+from data_process.coco import CocoDataSet
+
 # --------------------------------------------------
-# Wrap your custom CocoDataSet in a PyTorch Dataset
+# Wrap the COCO dataset in a PyTorch Dataset
 # --------------------------------------------------
 class CocoTrainDataset(torch.utils.data.Dataset):
     def __init__(self, data_path, opts, split='train'):
@@ -24,16 +24,14 @@ class CocoTrainDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         img, heatmaps, paf, ignore_mask, keypoints = self.coco_dataset.get_item_raw(idx)
-        if not torch.is_tensor(img):
-            img = torch.from_numpy(img).permute(2, 0, 1).float()
-        if not torch.is_tensor(heatmaps):
-            heatmaps = torch.from_numpy(heatmaps).float()
+        # Convert to tensors and adjust dimensions if needed.
+        img = torch.from_numpy(img).permute(2, 0, 1).float()
+        heatmaps = torch.from_numpy(heatmaps).float()
         return img, heatmaps
 
 # --------------------------------------------------
-# Define the Keypoint Head (same for both backbones)
+# Define the Keypoint Head (VGG version)
 # --------------------------------------------------
-# This is for VGG
 class KeypointHead(nn.Module):
     def __init__(self, in_channels, num_keypoints):
         super(KeypointHead, self).__init__()
@@ -53,87 +51,35 @@ class KeypointHead(nn.Module):
         x = self.conv2(x)
         return x
 
-# Alternative Keypoint Head for MobileNet (for reference; do not uncomment unless using MobileNet)
-# class KeypointHead(nn.Module):
-#     def __init__(self, in_channels, num_keypoints):
-#         super(KeypointHead, self).__init__()
-#         # For VGG backbone (old code), you had two upsampling layers:
-#         # For MobileNet, we need more upsampling to match the GT heatmap size.
-#         # Assuming the backbone outputs a feature map with spatial size ≈23×23,
-#         # we need a total upsampling factor of 16 (2^4 = 16) to reach ~368×368.
-#         self.upsample1 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-#         self.conv1 = nn.Conv2d(in_channels, 256, kernel_size=3, padding=1)
-#         self.bn1 = nn.BatchNorm2d(256)
-#         self.relu1 = nn.ReLU(inplace=True)
-#
-#         self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-#         self.conv2 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
-#         self.bn2 = nn.BatchNorm2d(256)
-#         self.relu2 = nn.ReLU(inplace=True)
-#
-#         self.upsample3 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-#         self.conv3 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
-#         self.bn3 = nn.BatchNorm2d(256)
-#         self.relu3 = nn.ReLU(inplace=True)
-#
-#         self.upsample4 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-#         self.conv4 = nn.Conv2d(256, num_keypoints, kernel_size=1)
-#
-#     def forward(self, x):
-#         x = self.upsample1(x)
-#         x = self.conv1(x)
-#         x = self.bn1(x)
-#         x = self.relu1(x)
-#
-#         x = self.upsample2(x)
-#         x = self.conv2(x)
-#         x = self.bn2(x)
-#         x = self.relu2(x)
-#
-#         x = self.upsample3(x)
-#         x = self.conv3(x)
-#         x = self.bn3(x)
-#         x = self.relu3(x)
-#
-#         x = self.upsample4(x)
-#         x = self.conv4(x)
-#         return x
-
 # --------------------------------------------------
-# Define the Keypoint Model with VGG backbone (MobileNet alternative commented)
+# Define the complete Keypoint Model (VGG backbone)
 # --------------------------------------------------
 class KeypointModel(nn.Module):
     def __init__(self, num_keypoints=19):
         super(KeypointModel, self).__init__()
-        
-        # VGG Code:
+        # Use a pretrained VGG19 and take a subset of layers.
         vgg = models.vgg19(pretrained=True)
         self.backbone = nn.Sequential(*list(vgg.features.children())[:10])
-        # for param in self.backbone.parameters():
-        #     param.requires_grad = False
-        
-        # NEW MobileNet V3 Small Backbone (commented out):
-        # feat = mobilenet_v3_small(weights='DEFAULT')
-        # Here we take a subset of layers. Adjust the slice as needed.
-        # self.backbone = nn.Sequential(*list(feat.features.children())[:-5]).eval()
-        
-        # OLD Head for VGG backbone (in_channels=128):
         self.head = KeypointHead(in_channels=128, num_keypoints=num_keypoints)
-        
-        # NEW Head for MobileNet backbone (in_channels=48):
-        # self.head = KeypointHead(in_channels=48, num_keypoints=num_keypoints)
 
     def forward(self, x):
-        # Freeze the backbone by wrapping in torch.no_grad()
+        # Freeze the backbone during training to focus on the head.
         with torch.no_grad():
             features = self.backbone(x)
         heatmaps = self.head(features)
         return heatmaps
 
 # --------------------------------------------------
-# Training and evaluation pipeline
+# Helper: Save checkpoint function
 # --------------------------------------------------
-def train_and_visualize():
+def save_checkpoint(state, filename):
+    torch.save(state, filename)
+    print(f"Checkpoint saved: {filename}")
+
+# --------------------------------------------------
+# Training and Validation Pipeline
+# --------------------------------------------------
+def train_and_validate():
     # Set seeds for reproducibility
     np.random.seed(0)
     torch.manual_seed(0)
@@ -141,98 +87,108 @@ def train_and_visualize():
     if torch.cuda.is_available():
         torch.cuda.manual_seed(0)
 
+    # Parse options and set data path
     opts = VizOpts().parse()
     data_path = opts.data
 
-    # Use full COCO training and validation datasets
+    # Create datasets for training and validation splits
     train_dataset = CocoTrainDataset(data_path, opts, split='train')
     val_dataset = CocoTrainDataset(data_path, opts, split='val')
-    
-    # Adjust the batch size to help limit GPU memory usage
-    batch_size = 4  # Lower batch size uses less GPU memory
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
-    # Set the device and attempt to limit GPU memory usage if available
-    if torch.cuda.is_available():
-        device = torch.device('cuda:0')
-        try:
-            # Limit per-process GPU memory to 50% of the available memory (if supported)
-            torch.cuda.set_per_process_memory_fraction(0.5, device=device)
-            print("Set GPU memory fraction to 0.5")
-        except Exception as e:
-            print("Could not set GPU memory fraction:", e)
-    else:
-        device = torch.device('cpu')
+    batch_size = 4  # Adjust this based on your GPU memory
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+
+    # Set device (GPU if available)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Using device:", device)
 
+    # Initialize the model and move it to the device.
     model = KeypointModel(num_keypoints=19).to(device)
-    
-    # Only the head's parameters are being optimized
-    optimizer = optim.Adam(model.head.parameters(), lr=1e-2, weight_decay=1e-4)
-    
-    num_epochs = 150
-    steps_per_epoch = len(train_loader)
-    # OneCycleLR scheduler: ramps the LR up to max_lr and then down, preventing it from dropping to 0.
-    scheduler = optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=1e-2,
-        steps_per_epoch=steps_per_epoch,
-        epochs=num_epochs
-    )
-    
+
+    # Only the head parameters are optimized.
+    optimizer = optim.Adam(model.head.parameters(), lr=1e-3, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
     criterion = nn.MSELoss()
-    train_loss_values = []
-    val_loss_values = []
+
+    best_val_loss = float('inf')
+
+    train_losses = []
+    val_losses = []
+
+    num_epochs = 3000
 
     for epoch in range(num_epochs):
-        # ----- Training -----
         model.train()
-        epoch_train_loss = 0.0
-        for imgs, gt_heatmaps in (train_loader):
-            imgs = imgs.to(device)
-            gt_heatmaps = gt_heatmaps.to(device)
+        train_loss = 0.0
 
+        # Create a tqdm progress bar for the training loader.
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1} Training", leave=False)
+        for imgs, gt_heatmaps in pbar:
+            imgs, gt_heatmaps = imgs.to(device), gt_heatmaps.to(device)
             optimizer.zero_grad()
             preds = model(imgs)
             loss = criterion(preds, gt_heatmaps)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Prevent NaNs
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            scheduler.step()  # Step the scheduler per batch
+            train_loss += loss.item()
 
-            epoch_train_loss += loss.item()
-        epoch_train_loss /= len(train_loader)
-        train_loss_values.append(epoch_train_loss)
+            # Update tqdm with the current loss.
+            pbar.set_postfix(loss=loss.item())
 
-        # ----- Evaluation -----
+        train_loss /= len(train_loader)
+        train_losses.append(train_loss)
+
+        # Validation phase
         model.eval()
-        epoch_val_loss = 0.0
+        val_loss = 0.0
         with torch.no_grad():
-            for imgs, gt_heatmaps in val_loader:
-                imgs = imgs.to(device)
-                gt_heatmaps = gt_heatmaps.to(device)
+            for imgs, gt_heatmaps in tqdm(val_loader, desc=f"Epoch {epoch+1} Validation", leave=False):
+                imgs, gt_heatmaps = imgs.to(device), gt_heatmaps.to(device)
                 preds = model(imgs)
                 loss = criterion(preds, gt_heatmaps)
-                epoch_val_loss += loss.item()
-        epoch_val_loss /= len(val_loader)
-        val_loss_values.append(epoch_val_loss)
+                val_loss += loss.item()
 
-        current_lr = optimizer.param_groups[0]['lr']
-        print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {epoch_train_loss:.6f}, Val Loss: {epoch_val_loss:.6f}, LR: {current_lr:.6f}")
+        val_loss /= len(val_loader)
+        val_losses.append(val_loss)
 
-        if epoch_train_loss < 1e-6:
-            print("Train Loss is very low; stopping early.")
-            break
+        print(f"Epoch [{epoch+1}/{num_epochs}] -> Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
 
-    torch.save(model, 'full_model.pth')
-    print("Full model saved as 'full_model.pth'")
-    np.save('train_loss_values.npy', np.array(train_loss_values))
-    np.save('val_loss_values.npy', np.array(val_loss_values))
-    print("Loss values saved as 'train_loss_values.npy' and 'val_loss_values.npy'")
+        # Create the checkpoint dictionary
+        checkpoint = {
+            'epoch': epoch + 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'train_loss': train_loss,
+            'val_loss': val_loss,
+            'best_val_loss': best_val_loss,
+        }
+        
+        # Save the latest checkpoint (overwrites the previous one)
+        save_checkpoint(checkpoint, 'latest_checkpoint.pth')
 
-    # ----- Visualization -----
-    # Show one sample from the validation set
+        # Save the best model if validation loss improved
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            save_checkpoint(checkpoint, 'best_model.pth')
+            print(f"New best model found at epoch {epoch+1} with val loss {val_loss:.6f}.")
+
+        scheduler.step()
+        torch.cuda.empty_cache()
+
+    # Save loss history for future analysis.
+    np.save('train_loss.npy', np.array(train_losses))
+    np.save('val_loss.npy', np.array(val_losses))
+    print("Training complete. Best model saved as 'best_model.pth'. Loss history saved.")
+
+    visualize_predictions(model, val_loader, device)
+
+# --------------------------------------------------
+# Visualization: Show sample predictions vs. ground truth.
+# --------------------------------------------------
+def visualize_predictions(model, val_loader, device):
     model.eval()
     with torch.no_grad():
         sample_img, sample_gt_heatmaps = next(iter(val_loader))
@@ -263,4 +219,4 @@ def train_and_visualize():
         plt.show()
 
 if __name__ == '__main__':
-    train_and_visualize()
+    train_and_validate()
