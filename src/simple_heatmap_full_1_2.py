@@ -30,11 +30,11 @@ class CocoTrainDataset(torch.utils.data.Dataset):
         return img, heatmaps
 
 # --------------------------------------------------
-# Define a simplified Grouped Keypoint Head with further reduced channels.
-# Each branch is dedicated to one keypoint.
+# Define a further simplified Grouped Keypoint Head.
+# Each branch now upsamples once to reach the desired output size.
 # --------------------------------------------------
 class GroupedKeypointHead(nn.Module):
-    def __init__(self, in_channels, num_keypoints, branch_channels=64):
+    def __init__(self, in_channels, num_keypoints, branch_channels=32):
         """
         Args:
             in_channels (int): Number of input channels from the backbone.
@@ -44,38 +44,39 @@ class GroupedKeypointHead(nn.Module):
         super(GroupedKeypointHead, self).__init__()
         self.num_keypoints = num_keypoints
         
-        # Each branch uses two upsampling and convolutional layers.
+        # Each branch: single upsample followed by a conv block.
         self.branches = nn.ModuleList([
             nn.Sequential(
+                # Upsample once to double spatial resolution.
                 nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                # After backbone, input is (batch, 128, H, W); upsample gives (batch, 128, 2H, 2W)
                 nn.Conv2d(in_channels, branch_channels, kernel_size=3, padding=1),
                 nn.BatchNorm2d(branch_channels),
                 nn.ReLU(inplace=True),
-                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
                 nn.Conv2d(branch_channels, 1, kernel_size=1)
             )
             for _ in range(num_keypoints)
         ])
 
     def forward(self, x):
-        # Each branch produces an output heatmap (batch_size, 1, H, W)
+        # Each branch produces an output heatmap of shape (batch, 1, H_out, W_out)
         branch_outputs = [branch(x) for branch in self.branches]
-        # Concatenate outputs along the channel dimension to form (batch_size, num_keypoints, H, W)
+        # Concatenate outputs along the channel dimension: (batch, num_keypoints, H_out, W_out)
         heatmaps = torch.cat(branch_outputs, dim=1)
         return heatmaps
 
 # --------------------------------------------------
-# Define the complete Keypoint Model with a simpler backbone.
+# Define the complete Keypoint Model with a simplified backbone.
 # --------------------------------------------------
 class KeypointModel(nn.Module):
     def __init__(self, num_keypoints=19):
         super(KeypointModel, self).__init__()
-        # Use a pretrained VGG19 and take fewer layers to reduce memory usage.
+        # Use a pretrained VGG19 and take only the first 6 layers.
+        # For an input of size, say, 368x368, the backbone outputs (batch, 128, 184, 184).
         vgg = models.vgg19(pretrained=True)
-        # Slicing the first 6 layers yields an output with 128 channels.
         self.backbone = nn.Sequential(*list(vgg.features.children())[:6])
-        # Set the head to use 128 input channels and reduced branch channels.
-        self.head = GroupedKeypointHead(in_channels=128, num_keypoints=num_keypoints, branch_channels=64)
+        # The head now takes 128 channels and upsamples once to get (batch, 1, 368, 368)
+        self.head = GroupedKeypointHead(in_channels=128, num_keypoints=num_keypoints, branch_channels=32)
 
     def forward(self, x):
         # Freeze the backbone during training.
@@ -110,8 +111,8 @@ def train_and_validate():
     train_dataset = CocoTrainDataset(data_path, opts, split='train')
     val_dataset = CocoTrainDataset(data_path, opts, split='val')
 
-    # Use a reduced batch size to help memory usage.
-    batch_size = 4
+    # Set batch size to 1 to further reduce memory usage.
+    batch_size = 1
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
@@ -136,7 +137,7 @@ def train_and_validate():
         model.train()
         train_loss = 0.0
 
-        # Create a tqdm progress bar for training.
+        # Training loop.
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1} Training", leave=False)
         for imgs, gt_heatmaps in pbar:
             imgs, gt_heatmaps = imgs.to(device), gt_heatmaps.to(device)
@@ -152,7 +153,7 @@ def train_and_validate():
         train_loss /= len(train_loader)
         train_losses.append(train_loss)
 
-        # Validation phase.
+        # Validation loop.
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
@@ -167,7 +168,7 @@ def train_and_validate():
 
         print(f"Epoch [{epoch+1}/{num_epochs}] -> Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
 
-        # Create the checkpoint dictionary.
+        # Save checkpoints.
         checkpoint = {
             'epoch': epoch + 1,
             'model_state_dict': model.state_dict(),
@@ -178,10 +179,8 @@ def train_and_validate():
             'best_val_loss': best_val_loss,
         }
         
-        # Save the latest checkpoint.
         save_checkpoint(checkpoint, 'latest_checkpoint.pth')
 
-        # Save the best model if validation loss improved.
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             save_checkpoint(checkpoint, 'best_model.pth')
@@ -190,7 +189,7 @@ def train_and_validate():
         scheduler.step()
         torch.cuda.empty_cache()
 
-    # Save loss history for analysis.
+    # Save loss history.
     np.save('train_loss.npy', np.array(train_losses))
     np.save('val_loss.npy', np.array(val_losses))
     print("Training complete. Best model saved as 'best_model.pth'. Loss history saved.")

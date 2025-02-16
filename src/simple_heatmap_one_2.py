@@ -168,7 +168,7 @@ def train_and_visualize():
     model = KeypointModel(num_keypoints=19).to(device)
     
     # Only the head's parameters are being optimized
-    optimizer = optim.Adam(model.head.parameters(), lr=1, weight_decay=1e-4)
+    optimizer = optim.Adam(model.head.parameters(), lr=1e-2, weight_decay=1e-4)
     
     num_epochs = 3000
     steps_per_epoch = len(train_loader)  # Likely 1 since we're overfitting on one image
