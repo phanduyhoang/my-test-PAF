@@ -9,6 +9,19 @@ import albumentations as A
 from .coco_process_utils import clean_annot, get_ignore_mask, get_heatmap, get_paf, get_keypoints, FLIP_INDICES
 from .process_utils import resize, resize_hm_paf, normalize
 
+def _prepare_keypoints_for_aug(keypoints):
+    """
+    Converts keypoints (assumed to be a numpy array of shape (N,3) or list of length N with (x,y,...) )
+    into a list of (x, y) tuples.
+    """
+    if isinstance(keypoints, np.ndarray):
+        # Use only the first two values
+        return [(float(pt[0]), float(pt[1])) for pt in keypoints]
+    elif isinstance(keypoints, list):
+        return [(float(pt[0]), float(pt[1])) for pt in keypoints]
+    else:
+        raise ValueError("Keypoints have an unexpected type: " + str(type(keypoints)))
+
 class CocoDataSet(data.Dataset):
     def __init__(self, data_path, opt, split='train'):
         self.coco_year = 2017
@@ -24,10 +37,10 @@ class CocoDataSet(data.Dataset):
         self.opt = opt
         print(f'Loaded {len(self.indices)} images for {split}')
         
-        # In-memory image cache
+        # In-memory cache for images to avoid repeated disk I/O.
         self.image_cache = {}
         
-        # Setup Albumentations augmentation pipeline (for training only)
+        # Setup Albumentations augmentation pipeline (only used if self.do_augment is True)
         if self.do_augment:
             self.aug = A.Compose(
                 [
@@ -51,7 +64,7 @@ class CocoDataSet(data.Dataset):
             self.aug = None
 
     def load_image(self, img_path):
-        # Use cache if available
+        # Check cache first to avoid repeated disk reads.
         if img_path in self.image_cache:
             return self.image_cache[img_path]
         img = cv2.imread(img_path)
@@ -62,36 +75,32 @@ class CocoDataSet(data.Dataset):
         return img
 
     def get_item_raw(self, index, to_resize=True):
-        # Get image ID from the filtered list
+        # Get the image id from the filtered indices
         image_id = self.indices[index]
         anno_ids = self.coco.getAnnIds(image_id)
         annots = self.coco.loadAnns(anno_ids)
         
-        # Load image info and image itself
+        # Load image information and the image itself
         img_info = self.coco.loadImgs([image_id])[0]
         img_path = os.path.join(self.img_dir, img_info['file_name'])
         img = self.load_image(img_path)
         
-        # Generate ignore mask and keypoints (keypoints expected as (N, 3): x, y, visibility)
+        # Generate ignore mask and keypoints
         ignore_mask = get_ignore_mask(self.coco, img, annots)
-        keypoints = get_keypoints(self.coco, img, annots)
+        keypoints = get_keypoints(self.coco, img, annots)  # Expected shape: (N, 3)
         
-        # Apply augmentation if enabled
+        # If augmentation is enabled, convert keypoints for Albumentations
         if self.do_augment and self.aug is not None:
-            # Convert keypoints from (N, 3) to a list of (x, y) tuples
-            if isinstance(keypoints, np.ndarray) and keypoints.ndim == 2 and keypoints.shape[1] >= 2:
-                keypoints_list = [tuple(pt[:2]) for pt in keypoints]
-            else:
-                keypoints_list = keypoints
-            
+            # Convert keypoints to a list of (x, y) tuples
+            keypoints_list = _prepare_keypoints_for_aug(keypoints)
             augmented = self.aug(image=img, mask=ignore_mask, keypoints=keypoints_list)
             img = augmented['image']
             ignore_mask = augmented['mask']
-            # Augmented keypoints come as a list of (x, y); reattach default visibility value 1
+            # Albumentations returns keypoints as a list of (x, y); add default visibility=1
             aug_keypoints = augmented['keypoints']
             keypoints = np.array([[x, y, 1] for (x, y) in aug_keypoints], dtype=np.float32)
         
-        # Resize image, ignore mask, and keypoints if requested
+        # Resize if required
         if to_resize:
             img, ignore_mask, keypoints = resize(img, ignore_mask, keypoints, self.opt.imgSize)
         
