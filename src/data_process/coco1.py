@@ -13,10 +13,21 @@ def _prepare_keypoints_for_aug(keypoints):
     """
     Converts keypoints (expected as a numpy array of shape (N,3) or a list)
     into a list of (x, y) tuples.
+    If a keypoint is nested (e.g. [[x, y], visibility]), extract the inner values.
     """
     if isinstance(keypoints, np.ndarray):
         keypoints = keypoints.tolist()
-    return [(float(pt[0]), float(pt[1])) for pt in keypoints]
+    result = []
+    for pt in keypoints:
+        # Check if the first element is itself a list/tuple (nested format)
+        if isinstance(pt[0], (list, tuple, np.ndarray)):
+            x = float(pt[0][0])
+            y = float(pt[0][1])
+        else:
+            x = float(pt[0])
+            y = float(pt[1])
+        result.append((x, y))
+    return result
 
 class CocoDataSet(data.Dataset):
     def __init__(self, data_path, opt, split='train'):
@@ -60,7 +71,7 @@ class CocoDataSet(data.Dataset):
             self.aug = None
 
     def load_image(self, img_path):
-        # Check cache first
+        # Use cache if available
         if img_path in self.image_cache:
             return self.image_cache[img_path]
         img = cv2.imread(img_path)
@@ -80,16 +91,16 @@ class CocoDataSet(data.Dataset):
         img = self.load_image(img_path)
         
         ignore_mask = get_ignore_mask(self.coco, img, annots)
-        keypoints = get_keypoints(self.coco, img, annots)  # Expected shape: (N,3)
+        keypoints = get_keypoints(self.coco, img, annots)  # Expected shape: (N,3) or nested
         
         if self.do_augment and self.aug is not None:
-            # Convert keypoints to a list of (x,y) tuples using the helper function
+            # Convert keypoints to a list of (x, y) tuples using the helper function.
             keypoints_list = _prepare_keypoints_for_aug(keypoints)
             augmented = self.aug(image=img, mask=ignore_mask, keypoints=keypoints_list)
             img = augmented['image']
             ignore_mask = augmented['mask']
-            aug_keypoints = augmented['keypoints']  # List of (x,y) tuples
-            # Rebuild keypoints as (N,3) with default visibility=1
+            aug_keypoints = augmented['keypoints']  # List of (x, y) tuples
+            # Rebuild keypoints as (N, 3) with default visibility=1
             keypoints = np.array([[x, y, 1] for (x, y) in aug_keypoints], dtype=np.float32)
         
         if to_resize:
