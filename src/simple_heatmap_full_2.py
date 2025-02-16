@@ -7,6 +7,10 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torchvision import models
 from tqdm import tqdm
+import os
+
+# Optionally set the CUDA allocation configuration to help with fragmentation.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
 # These are your custom modules.
 from opts.viz_opts import VizOpts
@@ -52,7 +56,7 @@ class KeypointHead(nn.Module):
         return x
 
 # --------------------------------------------------
-# Complete Keypoint Model with fine-tuning on part of the backbone
+# Complete Keypoint Model with partial backbone fine-tuning
 # --------------------------------------------------
 class KeypointModel(nn.Module):
     def __init__(self, num_keypoints=19, fine_tune_backbone=True):
@@ -63,14 +67,11 @@ class KeypointModel(nn.Module):
         self.head = KeypointHead(in_channels=128, num_keypoints=num_keypoints)
         
         if fine_tune_backbone:
-            # Freeze the EARLIER layers to preserve generic features.
-            # Let the later layers be trainable to quickly adapt to our keypoint task.
-            for idx, param in enumerate(self.backbone.parameters()):
-                # Freeze roughly the first 60% of the parameters.
-                if idx < int(0.6 * len(list(self.backbone.parameters()))):
-                    param.requires_grad = False
-                else:
-                    param.requires_grad = True
+            # Freeze roughly the first 60% of the backbone parameters.
+            params = list(self.backbone.parameters())
+            freeze_cutoff = int(0.6 * len(params))
+            for idx, param in enumerate(params):
+                param.requires_grad = False if idx < freeze_cutoff else True
         else:
             # Freeze entire backbone.
             for param in self.backbone.parameters():
@@ -107,10 +108,10 @@ def train_and_validate():
     train_dataset = CocoTrainDataset(data_path, opts, split='train')
     val_dataset = CocoTrainDataset(data_path, opts, split='val')
 
-    # Increase batch size and DataLoader efficiency.
-    batch_size = 32
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
+    # Reduce batch size and number of workers to lower memory footprint.
+    batch_size = 16  # Reduced from 32
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Using device:", device)
@@ -118,7 +119,7 @@ def train_and_validate():
     # Initialize the model with partial backbone fine-tuning.
     model = KeypointModel(num_keypoints=19, fine_tune_backbone=True).to(device)
 
-    # Use different learning rates for backbone (lower) and head (higher).
+    # Use different learning rates for backbone and head.
     head_params = list(model.head.parameters())
     backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
     optimizer = optim.AdamW([
@@ -126,7 +127,7 @@ def train_and_validate():
         {'params': head_params, 'lr': 1e-3}
     ], weight_decay=1e-4)
 
-    # CosineAnnealingWarmRestarts for a smoother LR schedule.
+    # CosineAnnealingWarmRestarts scheduler for a smoother learning rate schedule.
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
     criterion = nn.MSELoss()
 
