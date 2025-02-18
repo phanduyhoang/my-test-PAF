@@ -49,7 +49,7 @@ def train_net(train_loader, test_loader, model, criterion_hm, criterion_paf, opt
         step(train_loader, model, criterion_hm, criterion_paf, True, optimizer, viz_output=viz_output)
 
         # Save model every 5 epochs
-        if epoch % 5 == 0:
+        if epoch % 1000 == 0:
             model_path = f"/kaggle/working/model_epoch_{epoch}.pth"
             torch.save(model.state_dict(), model_path)
             print(f"Model saved at: {model_path}")
