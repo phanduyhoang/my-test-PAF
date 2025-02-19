@@ -55,7 +55,7 @@ def train_net(train_loader, test_loader, model, criterion_hm, criterion_paf, opt
         #     print(f"Model saved at: {model_path}")
 
         if epoch % val_interval == 0:
-            validate_net(test_loader, model, criterion_hm, criterion_paf, save_dir, epoch, viz_output=viz_output)
+            validate_net(test_loader, model, criterion_hm, criterion_paf, save_dir=None, epoch, viz_output=viz_output)
 
         adjust_learning_rate(optimizer, epoch, drop_lr, learn_rate)
 
